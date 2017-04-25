@@ -5,17 +5,12 @@ describe('chrome-remote-js', function () {
 
         const spawn = () => chrome.spawn();
         const connect = () => chrome.connect();
-        const open = () => chrome.open('https://casino.mrgreen.com', 'finitus');
+        const open = () => chrome.open('https://www.google.com', 'finitus');
 
         return spawn()
             .then(connect)
             .then(open)
-            .then(() => chrome._send({
-                method: `DOM.querySelector`,
-                params: {}
-            })
-            .then(console.log));
-
+            .then(console.log);
     })
 });
 
