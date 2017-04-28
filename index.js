@@ -17,28 +17,42 @@ module.exports = class Chrome {
         makeSure(this.options).has('debuggerUrl');
 
         this.events = new (require('events').EventEmitter);
+
+        process.once('SIGHUP', () => {
+            this.ls.kill('SIGHUP');
+        });
+        process.once('exit', () => {
+            this.ls.kill('SIGHUP');;
+        });
+        process.once('SIGINT', () => {
+            this.ls.kill('SIGHUP');
+        });
+
+
+    }
+
+    coverage() {
+        return {
+            start: () => {
+                return this._send({ method: 'Profiler.enable' })
+                    .then(() => this._send({ method: 'Profiler.startPreciseCoverage' }))
+            },
+            stop: () => {
+                return this._send({ method: 'Profiler.takePreciseCoverage' });
+            }
+        }
     }
 
     async spawn() {
         const spawn = require('child_process').spawn;
-        const ls = spawn('chromium-browser', ['--incognito', `-remote-debugging-port=${this.options.debuggerUrl.split(':')[2]}`]);
+        this.ls = spawn('chromium-browser', ['--incognito', `-remote-debugging-port=${this.options.debuggerUrl.split(':')[2]}`]);
 
-        ls.stdout.pipe(process.stdout)
+        //this.ls.stdout.pipe(process.stdout)
 
-        ls.stderr.pipe(process.stderr);
+        //this.ls.stderr.pipe(process.stderr);
 
-        ls.on('close', (code) => {
-            debug(`child process exited with code ${code}`);
-        });
-
-        process.once('SIGHUP', () => {
-            ls.kill('SIGHUP');
-        });
-        process.once('exit', () => {
-            ls.kill('SIGHUP');
-        });
-        process.once('SIGINT', () => {
-            ls.kill('SIGHUP');
+        this.ls.on('close', (code) => {
+            debug(`Chromium browser exited with code ${code}`);
         });
 
         return await new Promise((resolve, reject) => {
@@ -58,6 +72,11 @@ module.exports = class Chrome {
             assertOnline();
         });
     }
+
+    kill() {
+        this.ls.kill();
+    }
+
     async _send(payload, customEventHandler) {
         return await new Promise((resolve, reject) => {
             payload.id = shortid.generate();
@@ -116,25 +135,25 @@ module.exports = class Chrome {
         })
     }
 
-    async waitForPage(method, params, eventKey, condition) {
+    async waitForPage(method, params, condition) {
         new ClientExecution(this.events);
         return await this._send({
             method,
             params
         }, done => {
             const listener = finished => {
-                if (condition) {
+                if (condition && typeof (condition) == 'function') {
                     if (!condition(finished)) {
                         debug('condition not met');
                         return;
                     }
                 }
 
-                this.events.removeListener(eventKey, listener);
+                this.events.removeListener('finitus', listener);
                 done(finished);
             };
 
-            this.events.on(eventKey, listener);
+            this.events.on('finitus', listener);
         });
     }
 
@@ -142,11 +161,11 @@ module.exports = class Chrome {
         return await this._send({ method: '' })
     }
 
-    async open(url, eventKey, condition) {
-        return await this.waitForPage('Page.navigate', { url: url }, eventKey, condition);
+    async open(url, condition) {
+        return await this.waitForPage('Page.navigate', { url: url }, condition);
     }
 
-    async eval(code, eventKey, condition, awaitPromise) {
+    eval(code, condition, awaitPromise) {
         const payload = {
             expression: code
         }
@@ -155,10 +174,10 @@ module.exports = class Chrome {
             payload.awaitPromise = awaitPromise
         }
 
-        if (eventKey) {
-            return await this.waitForPage('Runtime.evaluate', payload, eventKey, condition);
+        return {
+            run: async () => await this._send({ method: 'Runtime.evaluate', params: payload }),
+            runWait: async () => await this.waitForPage('Runtime.evaluate', payload, condition)
         }
-        return await this._send({ method: 'Runtime.evaluate', params: payload })
     }
 
     element(selector) {
